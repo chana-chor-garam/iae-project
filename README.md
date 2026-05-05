@@ -22,6 +22,28 @@ This algorithm uses the triangle inequality to maintain and progressively tighte
 
 ## How to Run
 
+### Interactive CLI (Recommended)
+An interactive CLI similar to the `add` project is available for this repo:
+
+```bash
+python3 cli.py
+```
+
+If your system `python3` is not the project environment, use:
+
+```bash
+./run_cli.sh
+```
+
+CLI features:
+- Visualize random graphs with exact, k-BFS, and Takes-Kosters diameters
+- Visualize real datasets copied from `AAD_Error404/maxflow-project/data`
+- Run single algorithm or all algorithms on a chosen graph
+- Run notebook-style benchmark suites
+- Generate comparison plots from CSV
+- Export report assets (`report/assets/tables` and `report/assets/figures`)
+- Explore VFOA networks (copied from `AAD_Error404` dataset)
+
 ### Running with a Graph File
 You can run the program with a pre-made graph file.
 

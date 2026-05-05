@@ -2,10 +2,16 @@ import math
 
 
 def takes_kosters(graph) -> int:
+    diameter, _ = takes_kosters_with_witness(graph)
+    return diameter
+
+
+def takes_kosters_with_witness(graph) -> tuple[int, tuple[int, int] | None]:
     if graph.V == 0:
-        return 0
+        return 0, None
 
     graph_diameter_lb = 0
+    witness_pair: tuple[int, int] | None = (0, 0)
     upper_bounds = [math.inf] * graph.V
     visited = [False] * graph.V
     visited_count = 0
@@ -23,7 +29,10 @@ def takes_kosters(graph) -> int:
 
         distances_from_u = graph.bfs(u)
         exact_eccentricity = max(distances_from_u)
-        graph_diameter_lb = max(graph_diameter_lb, exact_eccentricity)
+        if exact_eccentricity >= graph_diameter_lb:
+            farthest = max(range(graph.V), key=lambda node: distances_from_u[node])
+            witness_pair = (u, farthest)
+            graph_diameter_lb = exact_eccentricity
 
         visited[u] = True
         visited_count += 1
@@ -35,4 +44,4 @@ def takes_kosters(graph) -> int:
                 if potential_max < upper_bounds[w]:
                     upper_bounds[w] = potential_max
 
-    return graph_diameter_lb
+    return graph_diameter_lb, witness_pair
