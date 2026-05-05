@@ -1,0 +1,2 @@
+experiment,graph_desc,nodes,edges,algorithm,k,estimated_diameter,exact_diameter,abs_error,runtime_s
+single_run,random:dense:n=12,12,9,takes_kosters,,5,5,0,7.566300337202847e-05

@@ -32,6 +32,12 @@ import pandas as pd
 class PlotPaths:
     base_dir: Path
 
+    # Backwards-compat / soft stability: earlier versions used `comparisons_dir`.
+    # Keep it as an alias to `time_dir`.
+    @property
+    def comparisons_dir(self) -> Path:  # pragma: no cover
+        return self.time_dir
+
     @property
     def accuracy_dir(self) -> Path:
         return self.base_dir / "accuracy"

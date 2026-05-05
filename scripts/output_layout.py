@@ -2,23 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-OUTPUT_ROOT = Path("outputs")
-RESULTS_DIR = OUTPUT_ROOT / "results"
-PLOTS_DIR = OUTPUT_ROOT / "plots"
-PLOTS_NOTEBOOK_DIR = PLOTS_DIR / "notebook"
-PLOTS_ANALYSIS_DIR = PLOTS_DIR / "analysis"
-REPORT_ASSETS_DIR = OUTPUT_ROOT / "report_assets"
+# Output layout (simple and fixed):
+# - CSVs: outputs/results
+# - plots: outputs/plots/<subfolders>
+# - visualisations: outputs/visualisations/<subfolders>
+OUTPUTS_DIR = Path("outputs")
+RESULTS_DIR = OUTPUTS_DIR / "results"
+PLOTS_DIR = OUTPUTS_DIR / "plots"
+VIS_OUTPUT_ROOT = OUTPUTS_DIR / "visualisations"
 
 
 def ensure_output_tree() -> None:
-    for path in (
-        OUTPUT_ROOT,
-        RESULTS_DIR,
-        PLOTS_DIR,
-        PLOTS_NOTEBOOK_DIR,
-        PLOTS_ANALYSIS_DIR,
-        REPORT_ASSETS_DIR,
-    ):
+    for path in (OUTPUTS_DIR, RESULTS_DIR, PLOTS_DIR, VIS_OUTPUT_ROOT):
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -50,18 +45,18 @@ def resolve_results_input(raw_name: str, *, default_name: str) -> Path | None:
     return None
 
 
-def resolve_plot_output_dir(group: str, run_name: str | None = None) -> Path:
+def resolve_plot_output_dir(group: str) -> Path:
     ensure_output_tree()
     safe_group = (group or "general").strip().replace("/", "_").replace("\\", "_")
-    safe_run = (run_name or "default").strip().replace("/", "_").replace("\\", "_")
-    out = PLOTS_DIR / safe_group / safe_run
+    out = PLOTS_DIR / safe_group
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
-def resolve_report_output_dir(run_name: str | None = None) -> Path:
+def resolve_visualisation_output_dir(kind: str) -> Path:
+    """Return outputs/visualisations/<kind>."""
     ensure_output_tree()
-    safe_run = (run_name or "default").strip().replace("/", "_").replace("\\", "_")
-    out = REPORT_ASSETS_DIR / safe_run
+    safe_kind = (kind or "general").strip().replace("/", "_").replace("\\", "_").lower()
+    out = VIS_OUTPUT_ROOT / safe_kind
     out.mkdir(parents=True, exist_ok=True)
     return out

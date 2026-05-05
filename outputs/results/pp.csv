@@ -1,0 +1,2 @@
+experiment,graph_desc,nodes,edges,algorithm,k,estimated_diameter,exact_diameter,abs_error,runtime_s
+single_run,dataset:large500.tar.gz,500,9384,kbfs,23,3,3,0,0.014930899982573465

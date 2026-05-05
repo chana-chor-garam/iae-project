@@ -26,16 +26,20 @@ from main import read_graph_from_file, read_graph_from_stream
 from scripts.diameter_analysis import compare_diameters
 from scripts.diameter_visualize import visualize_graph_with_diameters, visualization_available
 from scripts.output_layout import (
+    PLOTS_DIR,
     RESULTS_DIR,
+    VIS_OUTPUT_ROOT,
     ensure_output_tree,
     resolve_plot_output_dir,
-    resolve_report_output_dir,
     resolve_results_input,
     resolve_results_output,
+    resolve_visualisation_output_dir,
 )
 from scripts.real_datasets import (
+    ensure_catalog_dataset_downloaded,
     ensure_real_datasets_copied,
     ensure_vfoa_index_copied,
+    list_catalog_real_dataset_specs,
     list_real_dataset_paths,
     list_vfoa_networks,
     load_real_dataset_graph,
@@ -48,7 +52,6 @@ from scripts.synthetic_benchmarks import (
     create_notebook_style_plots,
     exact_diameter,
     run_all_experiments,
-    save_report_assets,
 )
 
 
@@ -180,6 +183,11 @@ def show_comparison_result(result: dict) -> None:
     print(f"  TK diameter nodes:      {tk_pair if tk_pair is not None else 'not found'}")
 
 
+def _safe_name(raw: str) -> str:
+    text = (raw or "graph").strip().replace(" ", "_")
+    return "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in text).strip("_") or "graph"
+
+
 def visualize_random_graph() -> None:
     print_header("VISUALIZE RANDOM GRAPH")
     spec = choose_graph_spec()
@@ -195,6 +203,7 @@ def visualize_random_graph() -> None:
     show_comparison_result(result)
 
     if visualization_available():
+        vis_dir = resolve_visualisation_output_dir("random")
         visualize_graph_with_diameters(
             graph=graph,
             title=f"Random graph: {spec.graph_type} ({spec.label})",
@@ -203,28 +212,69 @@ def visualize_random_graph() -> None:
             tk_diameter=result["tk_diameter"],
             kbfs_pair=result.get("k_bfs_pair"),
             tk_pair=result.get("tk_pair"),
+            save_dir=vis_dir,
+            file_prefix=f"{_safe_name(spec.graph_type)}__{_safe_name(spec.label)}__k{k}",
         )
     else:
         print("\n[WARN] Visualization skipped. Install matplotlib + networkx to enable plotting.")
 
 
-def _choose_real_dataset_path() -> Path | None:
+def _list_real_dataset_options() -> list[tuple[str, object]]:
     copied = ensure_real_datasets_copied()
     if copied:
         print("\nCopied datasets from AAD project:")
         for p in copied:
             print(f"  - {p}")
 
-    paths = list_real_dataset_paths()
-    if not paths:
-        print("[ERROR] No real datasets found. Expected AAD data source is missing.")
+    local_paths = list_real_dataset_paths()
+    catalog_specs = list_catalog_real_dataset_specs()
+    options: list[tuple[str, object]] = []
+
+    for path in local_paths:
+        options.append(("local", path))
+
+    for graph_type, spec in catalog_specs:
+        options.append(("catalog", (graph_type, spec)))
+
+    return options
+
+
+def _resolve_real_dataset_option(option: tuple[str, object]) -> tuple[Path | None, str, str]:
+    kind, payload = option
+    if kind == "local":
+        path = payload  # type: ignore[assignment]
+        return path, path.stem, "local"
+
+    graph_type, spec = payload  # type: ignore[misc]
+    try:
+        downloaded = ensure_catalog_dataset_downloaded(spec)
+        print(f"[OK] Catalog dataset ready: {downloaded}")
+        return downloaded, spec.name, graph_type
+    except Exception as exc:
+        print(f"[ERROR] Failed to fetch catalog dataset '{spec.name}' ({graph_type}): {exc}")
+        return None, spec.name, graph_type
+
+
+def _choose_real_dataset_path() -> Path | None:
+    options = _list_real_dataset_options()
+
+    if not options:
+        print("[ERROR] No real datasets found.")
         return None
 
     print("\nAvailable real datasets:")
-    for idx, path in enumerate(paths, 1):
-        print(f"  {idx}. {path.name}")
-    choice = get_int_input("Select dataset: ", min_val=1, max_val=len(paths), default=1)
-    return paths[choice - 1]
+    for idx, option in enumerate(options, 1):
+        kind, payload = option
+        if kind == "local":
+            path = payload  # type: ignore[assignment]
+            print(f"  {idx}. [local] {path.name}")
+        else:
+            graph_type, spec = payload  # type: ignore[misc]
+            print(f"  {idx}. [catalog/{graph_type}] {spec.name}")
+
+    choice = get_int_input("Select dataset: ", min_val=1, max_val=len(options), default=1)
+    path, _, _ = _resolve_real_dataset_option(options[choice - 1])
+    return path
 
 
 def visualize_real_dataset() -> None:
@@ -246,6 +296,7 @@ def visualize_real_dataset() -> None:
     show_comparison_result(result)
 
     if visualization_available():
+        vis_dir = resolve_visualisation_output_dir("real")
         visualize_graph_with_diameters(
             graph=graph,
             title=f"Real dataset: {dataset_path.name}",
@@ -254,6 +305,8 @@ def visualize_real_dataset() -> None:
             tk_diameter=result["tk_diameter"],
             kbfs_pair=result.get("k_bfs_pair"),
             tk_pair=result.get("tk_pair"),
+            save_dir=vis_dir,
+            file_prefix=f"{_safe_name(dataset_path.stem)}__k{k}",
         )
     else:
         print("\n[WARN] Visualization skipped. Install matplotlib + networkx to enable plotting.")
@@ -307,33 +360,86 @@ def run_single_algorithm() -> None:
     print("  2. Takes-Kosters")
     algo = input("Your choice: ").strip()
 
-    k_default = min(5, graph.V)
-    k = get_int_input(f"k for k-BFS (default: {k_default}): ", min_val=1, max_val=graph.V, default=k_default)
-
     exact = exact_diameter(graph)
     if algo == "1":
+        k_default = min(5, graph.V)
+        k = get_int_input(f"k for k-BFS (default: {k_default}): ", min_val=1, max_val=graph.V, default=k_default)
         start = time.perf_counter()
         estimates = kbfs_eccentricity_estimate(graph.adj, k)
         elapsed = time.perf_counter() - start
         value = max(estimates) if estimates else 0
+        abs_error = abs(value - exact)
         print(f"\nGraph: {desc}")
         print(f"Nodes: {graph.V}, Edges: {count_edges(graph)}")
         print(f"Algorithm: k-BFS (k={k})")
         print(f"Estimated diameter: {value}")
         print(f"Exact diameter:     {exact}")
-        print(f"Absolute error:     {abs(value - exact)}")
+        print(f"Absolute error:     {abs_error}")
         print(f"Runtime (s):        {elapsed:.6f}")
+
+        save = (input("\nSave this result to CSV? (y/n, default: n): ").strip().lower() or "n") == "y"
+        if save:
+            import pandas as pd
+
+            out_name = input("CSV file name (default: single_runs.csv): ").strip()
+            out_csv = resolve_results_output(out_name, default_name="single_runs.csv")
+            row = {
+                "experiment": "single_run",
+                "graph_desc": desc,
+                "nodes": graph.V,
+                "edges": count_edges(graph),
+                "algorithm": "kbfs",
+                "k": int(k),
+                "estimated_diameter": int(value),
+                "exact_diameter": int(exact),
+                "abs_error": int(abs_error),
+                "runtime_s": float(elapsed),
+            }
+            df_row = pd.DataFrame([row])
+            if out_csv.exists():
+                df_existing = pd.read_csv(out_csv)
+                pd.concat([df_existing, df_row], ignore_index=True).to_csv(out_csv, index=False)
+            else:
+                df_row.to_csv(out_csv, index=False)
+            print(f"[OK] Saved: {out_csv}")
     elif algo == "2":
         start = time.perf_counter()
         value = takes_kosters(graph)
         elapsed = time.perf_counter() - start
+        abs_error = abs(value - exact)
         print(f"\nGraph: {desc}")
         print(f"Nodes: {graph.V}, Edges: {count_edges(graph)}")
         print("Algorithm: Takes-Kosters")
         print(f"Estimated diameter: {value}")
         print(f"Exact diameter:     {exact}")
-        print(f"Absolute error:     {abs(value - exact)}")
+        print(f"Absolute error:     {abs_error}")
         print(f"Runtime (s):        {elapsed:.6f}")
+
+        save = (input("\nSave this result to CSV? (y/n, default: n): ").strip().lower() or "n") == "y"
+        if save:
+            import pandas as pd
+
+            out_name = input("CSV file name (default: single_runs.csv): ").strip()
+            out_csv = resolve_results_output(out_name, default_name="single_runs.csv")
+            row = {
+                "experiment": "single_run",
+                "graph_desc": desc,
+                "nodes": graph.V,
+                "edges": count_edges(graph),
+                "algorithm": "takes_kosters",
+                "k": None,
+                "estimated_diameter": int(value),
+                "exact_diameter": int(exact),
+                "abs_error": int(abs_error),
+                "runtime_s": float(elapsed),
+            }
+            df_row = pd.DataFrame([row])
+            if out_csv.exists():
+                df_existing = pd.read_csv(out_csv)
+                pd.concat([df_existing, df_row], ignore_index=True).to_csv(out_csv, index=False)
+            else:
+                df_row.to_csv(out_csv, index=False)
+            print(f"[OK] Saved: {out_csv}")
     else:
         print("[ERROR] Invalid algorithm choice.")
 
@@ -364,7 +470,7 @@ def run_benchmark_suite() -> None:
         return
 
     seed = get_int_input("Random seed (default: 42): ", min_val=0, default=42)
-    output_name = input("Results file name (default: benchmark_results.csv): ").strip()
+    output_name = input("Output CSV file name (blank = default benchmark_results.csv): ").strip()
     output_path = resolve_results_output(output_name, default_name="benchmark_results.csv")
 
     print(f"\nRunning benchmark suite for k values: {k_values}")
@@ -374,6 +480,80 @@ def run_benchmark_suite() -> None:
     print(f"[OK] Rows: {len(df)}")
     print("\nSample:")
     print(df.head(8).to_string(index=False))
+
+
+def run_real_dataset_benchmark_suite() -> None:
+    print_header("RUN REAL DATASET BENCHMARK SUITE (ALL CLI DATASETS)")
+    raw_k = input("k values (comma-separated, default: 1,2,4,8): ").strip()
+    try:
+        k_values = parse_k_values(raw_k)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        return
+
+    output_name = input("Output CSV file name (blank = default real_world_benchmark_results.csv): ").strip()
+    output_path = resolve_results_output(output_name, default_name="real_world_benchmark_results.csv")
+
+    options = _list_real_dataset_options()
+    if not options:
+        print("[ERROR] No real datasets available.")
+        return
+
+    results: list[dict] = []
+    total = len(options)
+    for idx, option in enumerate(options, 1):
+        path, dataset_name, graph_type = _resolve_real_dataset_option(option)
+        if path is None:
+            print(f"[WARN] Skipping dataset {dataset_name} (path unavailable).")
+            continue
+        try:
+            graph = load_real_dataset_graph(path)
+        except Exception as exc:
+            print(f"[WARN] Failed to load dataset {dataset_name}: {exc}")
+            continue
+
+        if graph.V == 0:
+            print(f"[WARN] Skipping dataset {dataset_name} (empty graph).")
+            continue
+
+        edges = count_edges(graph)
+        density = (2.0 * edges) / (graph.V * (graph.V - 1)) if graph.V > 1 else 0.0
+
+        print(f"[{idx}/{total}] Running {dataset_name} (nodes={graph.V}, edges={edges}) for k={k_values}")
+        for k in k_values:
+            res = compare_diameters(graph, k)
+            results.append(
+                {
+                    "experiment": "real_world",
+                    "graph_type": graph_type,
+                    "label": dataset_name,
+                    "dataset_file": path.name,
+                    "nodes": graph.V,
+                    "edges": edges,
+                    "density": density,
+                    "k": k,
+                    "exact_diameter": res["exact_diameter"],
+                    "k_bfs_diameter": res["k_bfs_diameter"],
+                    "tk_diameter": res["tk_diameter"],
+                    "k_bfs_time": res["k_bfs_time"],
+                    "tk_time": res["tk_time"],
+                    "k_bfs_abs_error": abs(res["k_bfs_diameter"] - res["exact_diameter"]),
+                    "tk_abs_error": abs(res["tk_diameter"] - res["exact_diameter"]),
+                }
+            )
+
+    if not results:
+        print("[WARN] No real-dataset benchmark rows generated.")
+        return
+
+    import pandas as pd
+
+    df = pd.DataFrame(results)
+    df.to_csv(output_path, index=False)
+    print(f"[OK] Results saved: {output_path}")
+    print(f"[OK] Rows: {len(df)}")
+    print("\nSample:")
+    print(df.head(10).to_string(index=False))
 
 
 def _pick_results_file(default_name: str = "benchmark_results.csv") -> Path | None:
@@ -395,8 +575,7 @@ def plot_from_results() -> None:
 
     df = pd.read_csv(results_file)
     k = get_int_input("k slice for plotting (default: 4): ", min_val=1, default=4)
-    run_name = input("Plot run name (default: notebook): ").strip() or "notebook"
-    out_dir = resolve_plot_output_dir("notebook", run_name)
+    out_dir = resolve_plot_output_dir("notebook")
     paths = create_notebook_style_plots(df, output_dir=out_dir, k=k)
     if not paths:
         print("[WARN] No plots were generated.")
@@ -406,23 +585,8 @@ def plot_from_results() -> None:
         print(f"  - {p}")
 
 
-def export_report_from_results() -> None:
-    print_header("EXPORT REPORT TABLES + FIGURES")
-    results_file = _pick_results_file(default_name="benchmark_results.csv")
-    if results_file is None:
-        return
-
-    import pandas as pd
-
-    df = pd.read_csv(results_file)
-    run_name = input("Report bundle name (default: report): ").strip() or "report"
-    report_dir = resolve_report_output_dir(run_name)
-    k = get_int_input("k slice for report plots (default: 4): ", min_val=1, default=4)
-    table_dir, figure_dir, figure_paths = save_report_assets(df, report_dir=report_dir, k_to_plot=k)
-    print(f"[OK] Tables saved to:  {table_dir}")
-    print(f"[OK] Figures saved to: {figure_dir}")
-    for p in figure_paths:
-        print(f"  - {p.name}")
+# NOTE: Notebook-style plotting has been removed from the interactive menu to
+# keep the workflow simple. The full analysis pipeline covers all core plots.
 
 
 def plot_analysis_pipeline() -> None:
@@ -444,8 +608,7 @@ def plot_analysis_pipeline() -> None:
 
     aggregate = (input("Average duplicate runs? (y/n, default: y): ").strip().lower() or "y") == "y"
 
-    run_name = input("Analysis run name (default: analysis): ").strip() or "analysis"
-    out_dir = resolve_plot_output_dir("analysis", run_name)
+    out_dir = resolve_plot_output_dir("analysis")
 
     # Optional slice controls.
     comp_k_raw = input("k for comparison/scaling plots (default: 4): ").strip() or "4"
@@ -530,6 +693,7 @@ def vfoa_explorer() -> None:
             print(f"Participants: {meta['participants']}, Timesteps: {meta['timesteps']}, Edges: {meta['edges']}")
             show_comparison_result(result)
             if visualization_available():
+                vis_dir = resolve_visualisation_output_dir("vfoa")
                 visualize_graph_with_diameters(
                     graph=graph,
                     title=f"VFOA network{nid}",
@@ -538,6 +702,8 @@ def vfoa_explorer() -> None:
                     tk_diameter=result["tk_diameter"],
                     kbfs_pair=result.get("k_bfs_pair"),
                     tk_pair=result.get("tk_pair"),
+                    save_dir=vis_dir,
+                    file_prefix=f"network{nid}__k{k}",
                 )
             else:
                 print("[WARN] Visualization skipped (missing matplotlib/networkx).")
@@ -597,15 +763,17 @@ def main_menu() -> None:
     while True:
         clear_screen()
         print_header("IAE PROJECT - DIAMETER APPROXIMATION CLI")
-        print(f"\nOutputs are grouped under: {RESULTS_DIR.parent}")
+        print(f"\nCSVs:  {RESULTS_DIR.resolve()}")
+        print(f"Plots: {PLOTS_DIR.resolve()}")
+        print(f"Visualisations: {VIS_OUTPUT_ROOT.resolve()}")
         print("\nMain Menu:")
         print("  1. Visualize Random Graph (graph + diameters)")
-        print("  2. Visualize Real Dataset (copied from AAD)")
+        print("  2. Visualize Real Dataset ")
         print("  3. Run Single Algorithm on Chosen Graph")
         print("  4. Run All Algorithms on Chosen Graph")
         print("  5. Run Benchmark Experiments")
         print("  6. Plot / Export Tools")
-        print("  7. VFOA Network Explorer (copied from AAD)")
+        print("  7. VFOA Network Explorer")
         print("\n  0. Exit")
 
         try:
@@ -625,19 +793,23 @@ def main_menu() -> None:
             elif choice == "4":
                 run_all_algorithms()
             elif choice == "5":
-                run_benchmark_suite()
+                print("\nBenchmark Menu:")
+                print("  1. Synthetic benchmark suite")
+                print("  2. Real-dataset benchmark suite (all CLI datasets)")
+                print("  0. Back")
+                bsub = input("\nYour choice: ").strip()
+                if bsub == "1":
+                    run_benchmark_suite()
+                elif bsub == "2":
+                    run_real_dataset_benchmark_suite()
+                elif bsub != "0":
+                    print("[ERROR] Invalid benchmark menu choice.")
             elif choice == "6":
                 print("\nPlot / Export Menu:")
-                print("  1. Plot notebook-style figures from results CSV")
-                print("  2. Export report tables + figures from results CSV")
-                print("  3. Plot full experimental analysis pipeline (B-J)")
+                print("  1. Plot full experimental analysis pipeline (B-J)")
                 print("  0. Back")
                 sub = input("\nYour choice: ").strip()
                 if sub == "1":
-                    plot_from_results()
-                elif sub == "2":
-                    export_report_from_results()
-                elif sub == "3":
                     plot_analysis_pipeline()
             elif choice == "7":
                 vfoa_explorer()

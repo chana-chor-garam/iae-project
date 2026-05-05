@@ -3,9 +3,12 @@ from __future__ import annotations
 import csv
 import math
 import shutil
+import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 from algos.graph import Graph
+from scripts.datasets import DatasetSpec, iter_real_world_dataset_specs
 from scripts.graph_io import build_graph_from_edges, load_graph_from_path
 
 
@@ -13,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DATA_DIR = PROJECT_ROOT / "data"
 AAD_DATA_DIR = PROJECT_ROOT.parent / "AAD_Error404" / "maxflow-project" / "data"
 VFOA_REL = Path("comm-f2f-Resistance-network") / "comm-f2f-Resistance"
+CATALOG_DATA_DIR = LOCAL_DATA_DIR / "catalog"
 
 
 def _safe_copy(src: Path, dst: Path) -> bool:
@@ -66,6 +70,37 @@ def list_real_dataset_paths() -> list[Path]:
         if path.exists():
             paths.append(path)
     return paths
+
+
+def list_catalog_real_dataset_specs() -> list[tuple[str, DatasetSpec]]:
+    return list(iter_real_world_dataset_specs())
+
+
+def _download_file(url: str, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        data = resp.read()
+    dst.write_bytes(data)
+
+
+def _infer_suffix_from_url(url: str) -> str:
+    path = urlparse(url).path.lower()
+    if path.endswith(".tar.gz"):
+        return ".tar.gz"
+    for suffix in (".txt.gz", ".graph.bz2", ".bz2", ".gz", ".clq", ".txt", ".csv"):
+        if path.endswith(suffix):
+            return suffix
+    return ".dat"
+
+
+def ensure_catalog_dataset_downloaded(spec: DatasetSpec) -> Path:
+    CATALOG_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = _infer_suffix_from_url(spec.source)
+    dst = CATALOG_DATA_DIR / f"{spec.name}{suffix}"
+    if dst.exists():
+        return dst
+    _download_file(spec.source, dst)
+    return dst
 
 
 def list_vfoa_networks() -> list[dict]:
