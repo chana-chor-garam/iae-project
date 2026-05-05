@@ -1,0 +1,289 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\definecolor{codebg}{rgb}{0.97,0.97,0.97}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  breaklines=true,
+  showstringspaces=false
+}
+
+\title{Graph Diameter Estimation in Large Graphs\\
+\large Implementations of iFUB (Crescenzi), Takes--Kosters (2015), and k-BFS (Shun)}
+\author{IAE Project}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Problem Description}
+
+\textbf{Graph Diameter} is a fundamental property of a graph. Given an (unweighted) graph $G=(V,E)$, the \emph{distance} between two vertices $u,v\in V$ is the length of the shortest path between them and is denoted $d(u,v)$. The \emph{eccentricity} of a vertex $u$ is
+\[
+\varepsilon(u) = \max_{v\in V} d(u,v).
+\]
+The \emph{diameter} of the graph is
+\[
+\mathrm{diam}(G)=\max_{u\in V} \varepsilon(u) = \max_{u,v\in V} d(u,v).
+\]
+
+We were given the problem in the following framing:
+
+\begin{quote}
+\emph{Graph Diameter: Finding the diameter of graph is a very important problem with multiple applications and algorithms. We studied one such in class, the algorithm of Crescenzi. There exist other algorithms over the past few years.}
+\end{quote}
+
+Computing the diameter \emph{exactly} by running BFS from every vertex costs $\Theta(|V|\cdot(|V|+|E|))$ in unweighted graphs, which becomes infeasible for large networks. Therefore, practical systems often use algorithms that either:
+\begin{itemize}
+  \item compute the exact diameter but prune most BFS runs in practice, or
+  \item compute good approximations / bounds using a small number of BFS traversals.
+\end{itemize}
+
+In this project, we studied and implemented diameter estimation methods based on repeated BFS plus pruning/bounding.
+
+\section{Algorithms Studied (with examples)}
+
+This codebase contains implementations of the following methods:
+\begin{itemize}
+  \item Crescenzi et al. \textbf{iFUB} (Iterative Fringe Upper Bound)
+  \item \textbf{Takes \& Kosters (2015)} pruning using triangle inequality
+  \item \textbf{k-BFS (Shun)} landmark-based eccentricity estimation (approximation)
+\end{itemize}
+
+\subsection{Crescenzi et al.: iFUB (Iterative Fringe Upper Bound)}
+
+\textbf{Idea.} iFUB starts from a peripheral vertex, computes distances from a chosen reference vertex, then iteratively runs BFS from the \emph{fringe} (vertices far from the reference). While moving inward, it maintains a current best lower bound $LB$ on the diameter. For a fringe vertex $x$, it computes an upper bound $UB(x)$ on how large the diameter could become if we were to explore further. If the best possible upper bound of remaining vertices is no larger than $LB$, the algorithm can stop.
+
+\textbf{Simplified bound rule (used in our C++ implementation).}
+If $d(u,x)$ is the distance from the current reference $u$ to a candidate fringe vertex $x$, then
+\[
+UB(x) = 2\, d(u,x).
+\]
+If $UB(x) \le LB$, no remaining vertex can improve the diameter and we terminate.
+
+\textbf{Example.} Consider a path graph with 5 vertices:
+\[
+0-1-2-3-4.
+\]
+Diameter is 4. A BFS from a peripheral node (say 0) yields distances $d(0,4)=4$ giving $LB=4$. iFUB may still consider a few fringe vertices, but once the fringe distance shrinks enough that $UB(x)=2\,d(0,x)\le 4$, it stops early.
+
+\textbf{Implementation file.}
+\begin{itemize}
+  \item C++: \texttt{iae-project/ifub.cpp}, header \texttt{iae-project/ifub.h}
+\end{itemize}
+
+\subsection{Takes \& Kosters (2015): Triangle-Inequality Pruning}
+
+\textbf{Idea.} This algorithm maintains:
+\begin{itemize}
+  \item a global \emph{lower bound} $LB$ on the diameter
+  \item for each vertex $w$, an \emph{upper bound} $UB(w)$ on its eccentricity.
+\end{itemize}
+
+At each iteration, pick an unprocessed vertex $u$ with the highest $UB(u)$ and run BFS from $u$ to compute its exact eccentricity $\varepsilon(u)$. Then update $LB\leftarrow \max(LB,\varepsilon(u))$. For every other vertex $w$, by triangle inequality:
+\[
+\varepsilon(w) \le d(w,u) + \varepsilon(u).
+\]
+Therefore we can tighten
+\[
+UB(w) \leftarrow \min\big(UB(w),\ d(w,u)+\varepsilon(u)\big).
+\]
+Any vertex whose $UB(w)\le LB$ can be pruned.
+
+\textbf{Example.} In a star graph (center connected to all leaves), the diameter is 2. BFS from any leaf gives eccentricity 2, immediately raising $LB$ to 2. After tightening bounds, all remaining vertices quickly satisfy $UB\le 2$ and the algorithm stops.
+
+\textbf{Implementation files.}
+\begin{itemize}
+  \item Python: \texttt{iae-project/algos/takeskosters.py}
+  \item C++: \texttt{iae-project/takeskosters.cpp} (header \texttt{iae-project/takeskosters.h})
+\end{itemize}
+
+\subsection{k-BFS (Shun): Landmark-based Eccentricity Estimation}
+
+\textbf{Idea.} k-BFS is a fast approximation method designed for large graphs. Instead of BFS from every vertex, it selects $k$ source vertices (landmarks), runs multi-source BFS to compute distances efficiently, and uses the observed distances to estimate eccentricities. Increasing $k$ typically improves accuracy but increases runtime.
+
+\textbf{Example intuition.} In dense graphs, diameters are often small, and even a small landmark set can discover the maximum distance quickly. In tree-like / sparse graphs, diameter can be large and choosing landmarks that lie near the periphery improves the estimate.
+
+\textbf{Implementation file.}
+\begin{itemize}
+  \item Python: \texttt{iae-project/algos/kbfs.py}
+\end{itemize}
+
+\section{Project Implementation Details}
+
+\subsection{Graph representation and BFS}
+
+All studied methods rely on repeated BFS in unweighted graphs.
+
+\begin{itemize}
+  \item \textbf{Python graph:} \texttt{iae-project/algos/graph.py} defines a simple adjacency-list graph and a standard BFS returning distance arrays.
+  \item \textbf{C++ graph:} \texttt{iae-project/graph.h} / \texttt{iae-project/graph.cpp} provides the same (adjacency list + BFS).
+\end{itemize}
+
+\subsection{Input format}
+
+Graph inputs are read in an \emph{edge-list} format:
+\begin{itemize}
+  \item first non-comment line: \texttt{n m}
+  \item subsequent non-comment lines: \texttt{u v}
+  \item lines starting with \texttt{\#} are ignored.
+\end{itemize}
+
+\subsection{Entry points and experiment scripts}
+
+\begin{itemize}
+  \item \textbf{Python CLI-style entry:} \texttt{iae-project/main.py}
+
+  It loads a graph from a file or stdin, runs:
+  \begin{enumerate}
+    \item k-BFS (default $k=\min(5,|V|)$) and reports an estimated diameter.
+    \item Takes--Kosters and reports an estimated diameter.
+  \end{enumerate}
+
+  \item \textbf{Synthetic graph generator:} \texttt{iae-project/graph\_generator.py}
+
+  Generates common graph families (sparse, dense, tree, complete, bipartite) used for evaluation.
+
+  \item \textbf{Experiment runner:} \texttt{iae-project/scripts/run\_experiments.py}
+
+  Automates downloading/creating graphs, runs k-BFS and Takes--Kosters, and writes timings/metrics to CSV.
+\end{itemize}
+
+\section{Complexity Discussion (high level)}
+
+All three studied approaches are built on BFS whose cost is $O(|V|+|E|)$ per run. The difference is \emph{how many} BFS runs are executed:
+\begin{itemize}
+  \item \textbf{iFUB:} worst-case still $O(|V|\cdot(|V|+|E|))$, but in practice usually stops after exploring only a small fringe.
+  \item \textbf{Takes--Kosters:} also worst-case $O(|V|\cdot(|V|+|E|))$, but aggressive pruning reduces BFS count substantially on many real graphs.
+  \item \textbf{k-BFS:} roughly $O(k\cdot(|V|+|E|))$ (plus small overhead), trading accuracy for speed.
+\end{itemize}
+
+\section{Experiments, Results, and Comparisons}
+
+We ran a small battery of synthetic experiments in the notebook
+	exttt{iae-project/synthetic\_graphs\_comparison.ipynb}. For each generated graph, we computed:
+\begin{itemize}
+  \item an \textbf{exact diameter} baseline via full BFS-from-every-vertex (feasible for these small graphs),
+  \item the \textbf{k-BFS} estimate for $k\in\{1,2,4,8\}$,
+  \item the \textbf{Takes--Kosters} result (exact in our implementation because it selectively runs BFS but does not approximate),
+  \item wall-clock runtime and a few internal counters (e.g., BFS passes for Takes--Kosters).
+\end{itemize}
+
+\subsection{Experimental setup}
+
+	extbf{Graph families.} We evaluated a mixture of topologies that commonly appear in benchmarks:
+trees, Erd\H{o}s--R\'enyi-like random sparse and dense graphs, small-world graphs, scale-free graphs,
+grids, and bipartite graphs.
+
+	extbf{Metrics.}
+For each run we recorded:
+\begin{itemize}
+  \item runtime in seconds (Python time measurements),
+  \item absolute error with respect to exact diameter, i.e.
+  $|\widehat{D} - D|$,
+  \item for Takes--Kosters: number of BFS passes (a proxy for work).
+\end{itemize}
+
+	extbf{Data export.}
+The notebook exports CSV summaries and figures under:
+	exttt{iae-project/report/assets/}.
+
+\subsection{Key plots}
+
+Figures~\ref{fig:runtime-by-type} and~\ref{fig:error-by-type} summarize mean runtime and mean absolute error
+for the ``core types'' experiment slice at $k=4$.
+
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}[b]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{assets/figures/runtime_by_type_k4.png}
+    \caption{Mean runtime by graph type (k=4).}
+    \label{fig:runtime-by-type}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{assets/figures/abs_error_by_type_k4.png}
+    \caption{Mean absolute error vs exact diameter (k=4).}
+    \label{fig:error-by-type}
+  \end{subfigure}
+  \caption{Core experiment slice comparing k-BFS and Takes--Kosters.}
+  \label{fig:core-slice}
+\end{figure}
+
+We also swept graph size (sparse graphs) and density (random sparse graphs) to illustrate scaling and sensitivity.
+
+\begin{figure}[h]
+  \centering
+  \begin{subfigure}[b]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{assets/figures/size_sweep_runtime_k4.png}
+    \caption{Size sweep: runtime vs nodes (k=4).}
+    \label{fig:size-sweep}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\textwidth]{assets/figures/density_sweep_abs_error_k4.png}
+    \caption{Density sweep: absolute error vs $p$ (k=4).}
+    \label{fig:density-sweep}
+  \end{subfigure}
+  \caption{Additional sweeps for the $k=4$ slice.}
+  \label{fig:sweeps}
+\end{figure}
+
+\subsection{Discussion}
+
+From these runs we observed the following recurring patterns:
+\begin{itemize}
+  \item \textbf{Runtime:} k-BFS is typically faster than Takes--Kosters for these parameter ranges because it runs only $k$ BFS traversals.
+        Takes--Kosters may run several BFS passes, but still far fewer than all-pairs BFS.
+  \item \textbf{Accuracy:} Takes--Kosters consistently matches the exact diameter baseline in our experiments.
+        k-BFS accuracy improves with larger $k$; with small $k$, underestimation is more visible on high-diameter families (trees/grids/sparse random graphs).
+  \item \textbf{Graph structure matters:} dense and small-world graphs often have very small diameter, so both methods can show near-zero error.
+        On sparser graphs, diameter is larger and landmark choice becomes more important for k-BFS.
+\end{itemize}
+
+\subsection{Reproducible tables}
+
+For convenience, we include a compact numeric slice (core experiment, $k=4$). The underlying CSV is
+	exttt{report/assets/tables/core\_summary\_k4.csv}.
+
+\begin{table}[h]
+\centering
+\caption{Core-type summary (mean over $n\in\{50,100,150\}$) at $k=4$.}
+\label{tab:core-k4}
+\begin{tabular}{lrrrr}
+	oprule
+Graph type & k-BFS time (s) & TK time (s) & k-BFS abs. error & TK abs. error\\
+\midrule
+\emph{(Generated from notebook; see CSV export for full precision.)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{How to Reproduce}
+
+This report describes the implementations in the \texttt{iae-project} folder. Typical runs (from that folder):
+
+\begin{lstlisting}
+# Run from a graph file
+python3 main.py graphs_prev/sparse.txt
+
+# Generate a graph and pipe to main
+./graph_generator.py tree -v 200 | python3 main.py
+\end{lstlisting}
+
+\end{document}
